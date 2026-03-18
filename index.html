@@ -6,6 +6,10 @@
     <title>沃尔玛商品贴换标加工转换工具</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        /* 优化输入框的选中状态，看起来更像 Excel */
+        input:focus { outline: 2px solid #3b82f6; border-radius: 2px; }
+    </style>
 </head>
 <body class="bg-gray-50 p-6 font-sans">
 
@@ -15,19 +19,16 @@
     <div class="mb-8 p-4 border border-blue-200 bg-blue-50 rounded-md">
         <h2 class="text-lg font-semibold mb-3 text-blue-800">第一步：上传《在库库存明细表》</h2>
         <input type="file" id="inventoryFile" accept=".xlsx, .xls, .csv" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200"/>
-        <p class="text-xs text-gray-500 mt-2">系统会自动筛选：库存主体=深圳市德拉姆供应链有限公司，仓库名称=DLM供应链沃尔玛深圳仓-SZ，且可用库存>0的数据。</p>
+        <p class="text-xs text-gray-500 mt-2">系统自动筛选：库存主体=深圳市德拉姆供应链有限公司，仓库名称=DLM供应链沃尔玛深圳仓-SZ，且可用库存>0。</p>
     </div>
 
     <div class="mb-8 p-4 border border-gray-200 rounded-md">
         <div class="flex justify-between items-center mb-3">
-            <h2 class="text-lg font-semibold text-gray-800">第二步：录入转换需求</h2>
-            <button onclick="addRow()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded text-sm font-medium transition">+ 手动添加一行</button>
-        </div>
-
-        <div class="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
-            <label class="block text-sm font-bold text-yellow-800 mb-1">⚡ 快捷批量录入（推荐）：</label>
-            <p class="text-xs text-yellow-700 mb-3">请在 Excel 中选中 <b>SKU、目标 FNSKU、需求数量、备注</b> 这 4 列数据并复制，然后在此处按 <kbd class="bg-gray-200 px-1 rounded">Ctrl+V</kbd> 粘贴，系统将自动生成表格。</p>
-            <textarea id="bulkPasteArea" rows="2" class="w-full p-2 border border-yellow-300 rounded focus:outline-none focus:ring-2 focus:ring-yellow-500 resize-none shadow-sm" placeholder="在此处按 Ctrl+V 粘贴从 Excel 复制的多行数据..."></textarea>
+            <div>
+                <h2 class="text-lg font-semibold text-gray-800 inline-block">第二步：录入转换需求</h2>
+                <span class="text-xs text-gray-500 ml-2">💡 提示：可直接在此表格任意输入框内按 <kbd class="bg-gray-100 px-1 border rounded">Ctrl+V</kbd> 粘贴 Excel 多行数据</span>
+            </div>
+            <button onclick="addRow()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-4 py-2 rounded text-sm font-medium transition">+ 手动加一行</button>
         </div>
         
         <table class="w-full text-left border-collapse" id="reqTable">
@@ -42,10 +43,10 @@
             </thead>
             <tbody id="reqBody">
                 <tr>
-                    <td class="p-2 border"><input type="text" class="w-full p-1 border rounded req-sku" placeholder="输入SKU"></td>
-                    <td class="p-2 border"><input type="text" class="w-full p-1 border rounded req-fnsku" placeholder="输入目标FNSKU"></td>
-                    <td class="p-2 border"><input type="number" class="w-full p-1 border rounded req-qty" placeholder="输入数量" min="1"></td>
-                    <td class="p-2 border"><input type="text" class="w-full p-1 border rounded req-note" placeholder="选填"></td>
+                    <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-sku" placeholder="输入或粘贴"></td>
+                    <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-fnsku" placeholder="输入或粘贴"></td>
+                    <td class="p-0 border"><input type="number" class="w-full p-2 border-0 req-qty" placeholder="输入数量" min="1"></td>
+                    <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-note" placeholder="选填"></td>
                     <td class="p-2 border text-center"><button onclick="removeRow(this)" class="text-red-500 hover:text-red-700 font-bold">删除</button></td>
                 </tr>
             </tbody>
@@ -58,14 +59,14 @@
 
     <div id="resultArea" class="mt-6 hidden">
         <h3 class="text-lg font-semibold mb-2">执行结果预览：</h3>
-        <ul id="summaryList" class="text-sm space-y-1 bg-gray-100 p-4 rounded-md shadow-inner"></ul>
+        <ul id="summaryList" class="text-sm space-y-1 bg-gray-100 p-4 rounded-md shadow-inner max-h-64 overflow-y-auto"></ul>
     </div>
 </div>
 
 <script>
     let inventoryData = [];
 
-    // 1. 监听文件上传并解析 Excel
+    // 1. 读取库存表
     document.getElementById('inventoryFile').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -81,88 +82,74 @@
         reader.readAsArrayBuffer(file);
     });
 
-    // ⚡ 2. 监听批量粘贴事件 (核心新增逻辑)
-    document.getElementById('bulkPasteArea').addEventListener('paste', function(e) {
-        e.preventDefault(); // 阻止默认的文本粘贴行为
+    // 2. 核心交互：监听表格内的 Ctrl+V 粘贴事件，实现自动扩展行
+    document.getElementById('reqBody').addEventListener('paste', function(e) {
+        // 阻止默认的只粘贴到一个输入框里的行为
+        e.preventDefault(); 
         
-        // 获取剪贴板数据
         let pasteData = (e.clipboardData || window.clipboardData).getData('text');
         if (!pasteData) return;
 
-        // 根据换行符拆分成多行数据 (兼容 Windows 和 Mac)
         let rows = pasteData.split(/\r?\n/); 
         const tbody = document.getElementById('reqBody');
         
-        // 如果当前表格只有1行且是空的，则自动清空它，避免留下一行空白
+        // 如果当前表格只有一行且是空的，则在粘贴时先清空它
         if (tbody.children.length === 1) {
             let firstRowInputs = tbody.querySelectorAll('input');
             let isEmpty = Array.from(firstRowInputs).every(input => input.value.trim() === '');
             if (isEmpty) tbody.innerHTML = '';
         }
 
-        let addedCount = 0;
-
-        // 遍历每一行数据进行填充
+        // 遍历剪贴板每一行生成输入框
         rows.forEach(row => {
-            if (!row.trim()) return; // 跳过空行
+            if (!row.trim()) return; 
             
-            // Excel 复制出来的数据，默认是以 Tab 键 (\t) 分隔的
             const cols = row.split('\t'); 
-            
-            // 提取数据（容错处理，防止复制的列数不够）
             const sku = cols[0] ? cols[0].trim() : '';
             const fnsku = cols[1] ? cols[1].trim() : '';
             const qty = cols[2] ? cols[2].trim() : '';
             const note = cols[3] ? cols[3].trim() : '';
 
-            // 只要 SKU 或 FNSKU 有一个不为空，就生成一行
+            // 只要有有效数据就生成新行
             if (sku || fnsku) {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td class="p-2 border"><input type="text" class="w-full p-1 border rounded req-sku" value="${sku}" placeholder="输入SKU"></td>
-                    <td class="p-2 border"><input type="text" class="w-full p-1 border rounded req-fnsku" value="${fnsku}" placeholder="输入目标FNSKU"></td>
-                    <td class="p-2 border"><input type="number" class="w-full p-1 border rounded req-qty" value="${qty}" placeholder="输入数量" min="1"></td>
-                    <td class="p-2 border"><input type="text" class="w-full p-1 border rounded req-note" value="${note}" placeholder="选填"></td>
+                    <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-sku" value="${sku}" placeholder="输入或粘贴"></td>
+                    <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-fnsku" value="${fnsku}" placeholder="输入或粘贴"></td>
+                    <td class="p-0 border"><input type="number" class="w-full p-2 border-0 req-qty" value="${qty}" placeholder="输入数量" min="1"></td>
+                    <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-note" value="${note}" placeholder="选填"></td>
                     <td class="p-2 border text-center"><button onclick="removeRow(this)" class="text-red-500 hover:text-red-700 font-bold">删除</button></td>
                 `;
                 tbody.appendChild(tr);
-                addedCount++;
             }
         });
-
-        // 清空粘贴框并提示
-        this.value = ''; 
-        if (addedCount > 0) {
-            // 用一个小小的动画或延迟提示，提升体验
-            setTimeout(() => alert(`✅ 成功识别并批量导入 ${addedCount} 条需求！`), 100);
-        }
     });
 
-    // 3. 动态添加需求行 (手动)
+    // 3. 手动增删行
     function addRow() {
         const tbody = document.getElementById('reqBody');
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td class="p-2 border"><input type="text" class="w-full p-1 border rounded req-sku" placeholder="输入SKU"></td>
-            <td class="p-2 border"><input type="text" class="w-full p-1 border rounded req-fnsku" placeholder="输入目标FNSKU"></td>
-            <td class="p-2 border"><input type="number" class="w-full p-1 border rounded req-qty" placeholder="输入数量" min="1"></td>
-            <td class="p-2 border"><input type="text" class="w-full p-1 border rounded req-note" placeholder="选填"></td>
+            <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-sku" placeholder="输入或粘贴"></td>
+            <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-fnsku" placeholder="输入或粘贴"></td>
+            <td class="p-0 border"><input type="number" class="w-full p-2 border-0 req-qty" placeholder="输入数量" min="1"></td>
+            <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-note" placeholder="选填"></td>
             <td class="p-2 border text-center"><button onclick="removeRow(this)" class="text-red-500 hover:text-red-700 font-bold">删除</button></td>
         `;
         tbody.appendChild(tr);
     }
 
-    // 4. 动态删除需求行
     function removeRow(btn) {
         const row = btn.parentNode.parentNode;
         if (document.getElementById('reqBody').children.length > 1) {
             row.parentNode.removeChild(row);
         } else {
-            alert("⚠️ 至少保留一行需求！");
+            // 如果是最后一行，直接清空输入框而不是删除 dom
+            row.querySelectorAll('input').forEach(input => input.value = '');
         }
     }
 
-    // 5. 核心处理逻辑 (瀑布流匹配)
+    // 4. 瀑布流匹配逻辑
     function processData() {
         if (inventoryData.length === 0) {
             alert("⚠️ 请先上传《在库库存明细表》！");
@@ -186,6 +173,7 @@
             return;
         }
 
+        // 筛选有效库存池
         let validPool = inventoryData.filter(row => 
             row['库存主体'] === '深圳市德拉姆供应链有限公司' &&
             row['仓库名称'] === 'DLM供应链沃尔玛深圳仓-SZ' &&
@@ -202,6 +190,7 @@
 
             let skuInventory = validPool.filter(r => r['SKU'] === req.sku);
             
+            // 优先级排序：FnSKU 一致的排在最前面
             skuInventory.sort((a, b) => {
                 if (a['FnSKU'] === req.targetFnsku && b['FnSKU'] !== req.targetFnsku) return -1;
                 if (a['FnSKU'] !== req.targetFnsku && b['FnSKU'] === req.targetFnsku) return 1;
@@ -218,8 +207,9 @@
                 let deductQty = Math.min(remainQty, itemAvail);
                 remainQty -= deductQty;
                 currentFulfilled += deductQty;
-                item['可用库存'] -= deductQty;
+                item['可用库存'] -= deductQty; // 更新内存中的库存池
 
+                // 核心：仅当原始 FnSKU 不等于目标 FNSKU 时，才需要生成换标记录
                 if (item['FnSKU'] !== req.targetFnsku) {
                     rowResults.push({
                         '转换类型': '贴换标',
@@ -256,17 +246,16 @@
         exportToExcel(outputExcelData);
     }
 
-    // 6. 导出Excel
+    // 5. 导出 Excel（根据图 2 结构更新表头）
     function exportToExcel(dataRows) {
         if(dataRows.length === 0) {
-            alert("匹配完成，但所有满足条件的库存均与目标FNSKU一致，无需生成贴换标单据。");
+            alert("匹配完成！所有满足条件的库存 FnSKU 均与目标一致，物理上无需贴标换标，未生成单据。");
             return;
         }
 
+        // 第1行是注释，第2行是字段标题
         const headerInfo = [
-            ['注释：'],
-            ['1. 黄色背景字段为必填'],
-            ['2. 针对转换类型为贴换标和换品牌，其中仓库1、SKU1、库区1、FNSKU1、数量为加工对象，仓库2、SKU2、库区2、FNSKU2为加工结果'],
+            ['第一行是注释'],
             ['转换类型', '法人主体', '仓库', 'SKU1', '库区1', 'FNSKU1', '数量', 'SKU2', 'FNSKU2', '备注', '状态']
         ];
 
