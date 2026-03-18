@@ -6,9 +6,16 @@
     <title>沃尔玛商品贴换标加工转换工具</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/jsuites@4.3.0/dist/jsuites.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsuites@4.3.0/dist/jsuites.min.css" type="text/css" />
+    <script src="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4.13.3/dist/index.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4.13.3/dist/jspreadsheet.min.css" type="text/css" />
+
     <style>
-        /* 优化输入框的选中状态，看起来更像 Excel */
-        input:focus { outline: 2px solid #3b82f6; border-radius: 2px; }
+        /* 微调网页版 Excel 的样式使其更贴合整体 UI */
+        .jexcel > thead > tr > td { font-weight: bold; background-color: #f3f4f6; color: #374151; }
+        .jexcel_content { box-shadow: none; border: 1px solid #e5e7eb; border-radius: 4px; }
     </style>
 </head>
 <body class="bg-gray-50 p-6 font-sans">
@@ -26,31 +33,12 @@
         <div class="flex justify-between items-center mb-3">
             <div>
                 <h2 class="text-lg font-semibold text-gray-800 inline-block">第二步：录入转换需求</h2>
-                <span class="text-xs text-gray-500 ml-2">💡 提示：可直接在此表格任意输入框内按 <kbd class="bg-gray-100 px-1 border rounded">Ctrl+V</kbd> 粘贴 Excel 多行数据</span>
+                <span class="text-xs text-green-600 ml-2 font-bold">💡 支持类似 Excel 的操作：框选多列粘贴、任意单元格修改、鼠标右键可“批量删除选中行”。</span>
             </div>
-            <button onclick="addRow()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-4 py-2 rounded text-sm font-medium transition">+ 手动加一行</button>
+            <button onclick="reqTable.insertRow()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-4 py-2 rounded text-sm font-medium transition">+ 新增空行</button>
         </div>
         
-        <table class="w-full text-left border-collapse" id="reqTable">
-            <thead>
-                <tr class="bg-gray-100 text-gray-700 text-sm">
-                    <th class="p-2 border">SKU (必填)</th>
-                    <th class="p-2 border">目标 FNSKU (必填)</th>
-                    <th class="p-2 border">需求数量 (必填)</th>
-                    <th class="p-2 border">备注 (选填)</th>
-                    <th class="p-2 border w-16 text-center">操作</th>
-                </tr>
-            </thead>
-            <tbody id="reqBody">
-                <tr>
-                    <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-sku" placeholder="输入或粘贴"></td>
-                    <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-fnsku" placeholder="输入或粘贴"></td>
-                    <td class="p-0 border"><input type="number" class="w-full p-2 border-0 req-qty" placeholder="输入数量" min="1"></td>
-                    <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-note" placeholder="选填"></td>
-                    <td class="p-2 border text-center"><button onclick="removeRow(this)" class="text-red-500 hover:text-red-700 font-bold">删除</button></td>
-                </tr>
-            </tbody>
-        </table>
+        <div id="spreadsheet" class="w-full"></div>
     </div>
 
     <div class="text-center">
@@ -58,15 +46,47 @@
     </div>
 
     <div id="resultArea" class="mt-6 hidden">
-        <h3 class="text-lg font-semibold mb-2">执行结果预览：</h3>
+        <h3 class="text-lg font-semibold mb-2">执行结果界面预览（导出文件中不含此状态说明）：</h3>
         <ul id="summaryList" class="text-sm space-y-1 bg-gray-100 p-4 rounded-md shadow-inner max-h-64 overflow-y-auto"></ul>
     </div>
 </div>
 
 <script>
     let inventoryData = [];
+    let reqTable = null; // 用于存储 jspreadsheet 实例
 
-    // 1. 读取库存表
+    // 1. 初始化网页版 Excel (Jspreadsheet)
+    document.addEventListener("DOMContentLoaded", function() {
+        // 初始化 10 行空数据
+        let initialData = Array.from({length: 10}, () => ['', '', '', '']);
+        
+        reqTable = jspreadsheet(document.getElementById('spreadsheet'), {
+            data: initialData,
+            columns: [
+                { type: 'text', title: 'SKU (必填)', width: 220 },
+                { type: 'text', title: '目标 FNSKU (必填)', width: 220 },
+                { type: 'numeric', title: '需求数量 (必填)', width: 150 },
+                { type: 'text', title: '备注 (选填)', width: 200 },
+            ],
+            minDimensions: [4, 5],
+            allowInsertRow: true,
+            allowManualInsertRow: true,
+            allowInsertColumn: false,
+            allowDeleteRow: true,
+            allowDeleteColumn: false,
+            wordWrap: true,
+            // 文本国际化（右键菜单汉化）
+            text: {
+                insertANewRowBefore: '在上方插入行',
+                insertANewRowAfter: '在下方插入行',
+                deleteSelectedRows: '❌ 删除选中的行',
+                copy: '复制',
+                paste: '粘贴',
+            }
+        });
+    });
+
+    // 2. 读取库存表
     document.getElementById('inventoryFile').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -82,87 +102,23 @@
         reader.readAsArrayBuffer(file);
     });
 
-    // 2. 核心交互：监听表格内的 Ctrl+V 粘贴事件，实现自动扩展行
-    document.getElementById('reqBody').addEventListener('paste', function(e) {
-        // 阻止默认的只粘贴到一个输入框里的行为
-        e.preventDefault(); 
-        
-        let pasteData = (e.clipboardData || window.clipboardData).getData('text');
-        if (!pasteData) return;
-
-        let rows = pasteData.split(/\r?\n/); 
-        const tbody = document.getElementById('reqBody');
-        
-        // 如果当前表格只有一行且是空的，则在粘贴时先清空它
-        if (tbody.children.length === 1) {
-            let firstRowInputs = tbody.querySelectorAll('input');
-            let isEmpty = Array.from(firstRowInputs).every(input => input.value.trim() === '');
-            if (isEmpty) tbody.innerHTML = '';
-        }
-
-        // 遍历剪贴板每一行生成输入框
-        rows.forEach(row => {
-            if (!row.trim()) return; 
-            
-            const cols = row.split('\t'); 
-            const sku = cols[0] ? cols[0].trim() : '';
-            const fnsku = cols[1] ? cols[1].trim() : '';
-            const qty = cols[2] ? cols[2].trim() : '';
-            const note = cols[3] ? cols[3].trim() : '';
-
-            // 只要有有效数据就生成新行
-            if (sku || fnsku) {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-sku" value="${sku}" placeholder="输入或粘贴"></td>
-                    <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-fnsku" value="${fnsku}" placeholder="输入或粘贴"></td>
-                    <td class="p-0 border"><input type="number" class="w-full p-2 border-0 req-qty" value="${qty}" placeholder="输入数量" min="1"></td>
-                    <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-note" value="${note}" placeholder="选填"></td>
-                    <td class="p-2 border text-center"><button onclick="removeRow(this)" class="text-red-500 hover:text-red-700 font-bold">删除</button></td>
-                `;
-                tbody.appendChild(tr);
-            }
-        });
-    });
-
-    // 3. 手动增删行
-    function addRow() {
-        const tbody = document.getElementById('reqBody');
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-sku" placeholder="输入或粘贴"></td>
-            <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-fnsku" placeholder="输入或粘贴"></td>
-            <td class="p-0 border"><input type="number" class="w-full p-2 border-0 req-qty" placeholder="输入数量" min="1"></td>
-            <td class="p-0 border"><input type="text" class="w-full p-2 border-0 req-note" placeholder="选填"></td>
-            <td class="p-2 border text-center"><button onclick="removeRow(this)" class="text-red-500 hover:text-red-700 font-bold">删除</button></td>
-        `;
-        tbody.appendChild(tr);
-    }
-
-    function removeRow(btn) {
-        const row = btn.parentNode.parentNode;
-        if (document.getElementById('reqBody').children.length > 1) {
-            row.parentNode.removeChild(row);
-        } else {
-            // 如果是最后一行，直接清空输入框而不是删除 dom
-            row.querySelectorAll('input').forEach(input => input.value = '');
-        }
-    }
-
-    // 4. 瀑布流匹配逻辑
+    // 3. 核心瀑布流匹配逻辑
     function processData() {
         if (inventoryData.length === 0) {
             alert("⚠️ 请先上传《在库库存明细表》！");
             return;
         }
 
-        const reqRows = document.querySelectorAll('#reqBody tr');
+        // 获取 Excel 实例中的数据
+        const dataRows = reqTable.getData();
         let requirements = [];
-        reqRows.forEach(row => {
-            const sku = row.querySelector('.req-sku').value.trim();
-            const fnsku = row.querySelector('.req-fnsku').value.trim();
-            const qty = parseInt(row.querySelector('.req-qty').value);
-            const note = row.querySelector('.req-note').value.trim();
+
+        dataRows.forEach(row => {
+            const sku = row[0] ? String(row[0]).trim() : '';
+            const fnsku = row[1] ? String(row[1]).trim() : '';
+            const qty = parseInt(row[2]);
+            const note = row[3] ? String(row[3]).trim() : ''; // 备注仅读取占位，不再输出
+            
             if (sku && fnsku && qty > 0) {
                 requirements.push({ sku, targetFnsku: fnsku, qty, note });
             }
@@ -209,7 +165,7 @@
                 currentFulfilled += deductQty;
                 item['可用库存'] -= deductQty; // 更新内存中的库存池
 
-                // 核心：仅当原始 FnSKU 不等于目标 FNSKU 时，才需要生成换标记录
+                // 仅当原始 FnSKU 不等于目标 FNSKU 时，才生成换标记录
                 if (item['FnSKU'] !== req.targetFnsku) {
                     rowResults.push({
                         '转换类型': '贴换标',
@@ -220,8 +176,8 @@
                         'FNSKU1': item['FnSKU'], 
                         '数量': deductQty,
                         'SKU2': req.sku,
-                        'FNSKU2': req.targetFnsku,
-                        '备注': req.note
+                        'FNSKU2': req.targetFnsku
+                        // 移除输出时的备注和状态列
                     });
                 }
             }
@@ -230,44 +186,54 @@
                 ? '✅ 满足' 
                 : `❌ 不满足，只有${currentFulfilled}，缺${req.qty - currentFulfilled}`;
 
+            // 将行数据压入导出数组
             rowResults.forEach(row => {
-                row['状态'] = statusMark;
                 outputExcelData.push(row);
             });
 
-            summaryMsg.push(`需求 SKU: <span class="font-mono">${req.sku}</span> | 需 ${req.qty} 个 -> <strong>${statusMark}</strong>`);
+            // 网页界面预览保留状态说明
+            summaryMsg.push(`需求 SKU: <span class="font-mono text-blue-700">${req.sku}</span> | 需 ${req.qty} 个 -> <strong>${statusMark}</strong>`);
         });
 
         const resultArea = document.getElementById('resultArea');
         const summaryList = document.getElementById('summaryList');
         resultArea.classList.remove('hidden');
-        summaryList.innerHTML = summaryMsg.map(msg => `<li class="border-b py-2 text-gray-700">${msg}</li>`).join('');
+        summaryList.innerHTML = summaryMsg.map(msg => `<li class="border-b border-gray-200 py-2 text-gray-700">${msg}</li>`).join('');
 
         exportToExcel(outputExcelData);
     }
 
-    // 5. 导出 Excel（根据图 2 结构更新表头）
+    // 4. 导出 Excel (严格按照要求的 9 列输出)
     function exportToExcel(dataRows) {
         if(dataRows.length === 0) {
             alert("匹配完成！所有满足条件的库存 FnSKU 均与目标一致，物理上无需贴标换标，未生成单据。");
             return;
         }
 
-        // 第1行是注释，第2行是字段标题
+        // 第1行是注释，第2行是严格的 9 列字段标题
         const headerInfo = [
             ['第一行是注释'],
-            ['转换类型', '法人主体', '仓库', 'SKU1', '库区1', 'FNSKU1', '数量', 'SKU2', 'FNSKU2', '备注', '状态']
+            ['转换类型', '法人主体', '仓库', 'SKU1', '库区1', 'FNSKU1', '数量', 'SKU2', 'FNSKU2']
         ];
 
+        // 严格映射这 9 字段，不再带入其他内容
         const bodyRows = dataRows.map(row => [
-            row['转换类型'], row['法人主体'], row['仓库'], row['SKU1'], row['库区1'], 
-            row['FNSKU1'], row['数量'], row['SKU2'], row['FNSKU2'], row['备注'], row['状态']
+            row['转换类型'], 
+            row['法人主体'], 
+            row['仓库'], 
+            row['SKU1'], 
+            row['库区1'], 
+            row['FNSKU1'], 
+            row['数量'], 
+            row['SKU2'], 
+            row['FNSKU2']
         ]);
 
         const finalSheetData = headerInfo.concat(bodyRows);
         const worksheet = XLSX.utils.aoa_to_sheet(finalSheetData);
         
-        worksheet['!cols'] = Array(11).fill({ wch: 18 });
+        // 设置导出的 Excel 列宽，使其看起来更整洁
+        worksheet['!cols'] = Array(9).fill({ wch: 20 });
 
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "转换单");
