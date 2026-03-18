@@ -13,7 +13,6 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4.13.3/dist/jspreadsheet.min.css" type="text/css" />
 
     <style>
-        /* 微调网页版 Excel 的样式使其更贴合整体 UI */
         .jexcel > thead > tr > td { font-weight: bold; background-color: #f3f4f6; color: #374151; }
         .jexcel_content { box-shadow: none; border: 1px solid #e5e7eb; border-radius: 4px; }
     </style>
@@ -46,18 +45,17 @@
     </div>
 
     <div id="resultArea" class="mt-6 hidden">
-        <h3 class="text-lg font-semibold mb-2">执行结果界面预览（导出文件中不含此状态说明）：</h3>
+        <h3 class="text-lg font-semibold mb-2">执行结果界面预览：</h3>
         <ul id="summaryList" class="text-sm space-y-1 bg-gray-100 p-4 rounded-md shadow-inner max-h-64 overflow-y-auto"></ul>
     </div>
 </div>
 
 <script>
     let inventoryData = [];
-    let reqTable = null; // 用于存储 jspreadsheet 实例
+    let reqTable = null; 
 
-    // 1. 初始化网页版 Excel (Jspreadsheet)
+    // 初始化电子表格组件
     document.addEventListener("DOMContentLoaded", function() {
-        // 初始化 10 行空数据
         let initialData = Array.from({length: 10}, () => ['', '', '', '']);
         
         reqTable = jspreadsheet(document.getElementById('spreadsheet'), {
@@ -75,7 +73,6 @@
             allowDeleteRow: true,
             allowDeleteColumn: false,
             wordWrap: true,
-            // 文本国际化（右键菜单汉化）
             text: {
                 insertANewRowBefore: '在上方插入行',
                 insertANewRowAfter: '在下方插入行',
@@ -86,7 +83,7 @@
         });
     });
 
-    // 2. 读取库存表
+    // 读取库存表
     document.getElementById('inventoryFile').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -102,14 +99,13 @@
         reader.readAsArrayBuffer(file);
     });
 
-    // 3. 核心瀑布流匹配逻辑
+    // 核心瀑布流匹配逻辑
     function processData() {
         if (inventoryData.length === 0) {
             alert("⚠️ 请先上传《在库库存明细表》！");
             return;
         }
 
-        // 获取 Excel 实例中的数据
         const dataRows = reqTable.getData();
         let requirements = [];
 
@@ -117,7 +113,7 @@
             const sku = row[0] ? String(row[0]).trim() : '';
             const fnsku = row[1] ? String(row[1]).trim() : '';
             const qty = parseInt(row[2]);
-            const note = row[3] ? String(row[3]).trim() : ''; // 备注仅读取占位，不再输出
+            const note = row[3] ? String(row[3]).trim() : ''; 
             
             if (sku && fnsku && qty > 0) {
                 requirements.push({ sku, targetFnsku: fnsku, qty, note });
@@ -129,24 +125,22 @@
             return;
         }
 
-        // 筛选有效库存池
         let validPool = inventoryData.filter(row => 
             row['库存主体'] === '深圳市德拉姆供应链有限公司' &&
             row['仓库名称'] === 'DLM供应链沃尔玛深圳仓-SZ' &&
             Number(row['可用库存']) > 0
         );
 
-        let outputExcelData = [];
+        let outputExcelData = []; // 用于存放 Sheet1 的正常数据
+        let unfulfilledData = []; // 用于存放 Sheet2 的异常缺货数据
         let summaryMsg = [];
 
         requirements.forEach(req => {
             let remainQty = req.qty;
             let currentFulfilled = 0;
-            let rowResults = [];
 
             let skuInventory = validPool.filter(r => r['SKU'] === req.sku);
             
-            // 优先级排序：FnSKU 一致的排在最前面
             skuInventory.sort((a, b) => {
                 if (a['FnSKU'] === req.targetFnsku && b['FnSKU'] !== req.targetFnsku) return -1;
                 if (a['FnSKU'] !== req.targetFnsku && b['FnSKU'] === req.targetFnsku) return 1;
@@ -163,11 +157,10 @@
                 let deductQty = Math.min(remainQty, itemAvail);
                 remainQty -= deductQty;
                 currentFulfilled += deductQty;
-                item['可用库存'] -= deductQty; // 更新内存中的库存池
+                item['可用库存'] -= deductQty; 
 
-                // 仅当原始 FnSKU 不等于目标 FNSKU 时，才生成换标记录
                 if (item['FnSKU'] !== req.targetFnsku) {
-                    rowResults.push({
+                    outputExcelData.push({
                         '转换类型': '贴换标',
                         '法人主体': '深圳市德拉姆供应链有限公司',
                         '仓库': 'DLM供应链沃尔玛深圳仓-SZ',
@@ -177,21 +170,30 @@
                         '数量': deductQty,
                         'SKU2': req.sku,
                         'FNSKU2': req.targetFnsku
-                        // 移除输出时的备注和状态列
                     });
                 }
             }
 
+            // ⚠️ 如果库存跑完了，仍然有缺口（remainQty > 0），则将其推入 Sheet2 数组
+            if (remainQty > 0) {
+                unfulfilledData.push({
+                    '转换类型': '贴换标',
+                    '法人主体': '深圳市德拉姆供应链有限公司',
+                    '仓库': 'DLM供应链沃尔玛深圳仓-SZ',
+                    'SKU1': req.sku,
+                    '库区1': '成品-存储1区',
+                    'FNSKU1': '', // 缺货状态下，没有具体的源 FNSKU 可供扣减
+                    '数量': remainQty, // 这里记录的是缺口的数量
+                    'SKU2': req.sku,
+                    'FNSKU2': req.targetFnsku,
+                    '备注': `不满足，总需${req.qty}，只有${currentFulfilled}，缺${remainQty}`
+                });
+            }
+
             let statusMark = remainQty === 0 
                 ? '✅ 满足' 
-                : `❌ 不满足，只有${currentFulfilled}，缺${req.qty - currentFulfilled}`;
+                : `❌ 不满足，只有${currentFulfilled}，缺${remainQty}`;
 
-            // 将行数据压入导出数组
-            rowResults.forEach(row => {
-                outputExcelData.push(row);
-            });
-
-            // 网页界面预览保留状态说明
             summaryMsg.push(`需求 SKU: <span class="font-mono text-blue-700">${req.sku}</span> | 需 ${req.qty} 个 -> <strong>${statusMark}</strong>`);
         });
 
@@ -200,44 +202,60 @@
         resultArea.classList.remove('hidden');
         summaryList.innerHTML = summaryMsg.map(msg => `<li class="border-b border-gray-200 py-2 text-gray-700">${msg}</li>`).join('');
 
-        exportToExcel(outputExcelData);
+        exportToExcel(outputExcelData, unfulfilledData);
     }
 
-    // 4. 导出 Excel (严格按照要求的 9 列输出)
-    function exportToExcel(dataRows) {
-        if(dataRows.length === 0) {
-            alert("匹配完成！所有满足条件的库存 FnSKU 均与目标一致，物理上无需贴标换标，未生成单据。");
+    // 导出双 Sheet 格式的 Excel
+    function exportToExcel(dataRows, unfulfilledRows) {
+        if(dataRows.length === 0 && unfulfilledRows.length === 0) {
+            alert("匹配完成！所有满足条件的库存 FnSKU 均与目标一致，无需贴标且无缺货，未生成单据。");
             return;
         }
 
-        // 第1行是注释，第2行是严格的 9 列字段标题
-        const headerInfo = [
+        const workbook = XLSX.utils.book_new();
+
+        // ========== Sheet 1: 正常转换单 (9列) ==========
+        // 即使为空也生成一个空表头，以防所有库存都缺货时导致报错
+        const headerInfo1 = [
             ['第一行是注释'],
             ['转换类型', '法人主体', '仓库', 'SKU1', '库区1', 'FNSKU1', '数量', 'SKU2', 'FNSKU2']
         ];
-
-        // 严格映射这 9 字段，不再带入其他内容
-        const bodyRows = dataRows.map(row => [
-            row['转换类型'], 
-            row['法人主体'], 
-            row['仓库'], 
-            row['SKU1'], 
-            row['库区1'], 
-            row['FNSKU1'], 
-            row['数量'], 
-            row['SKU2'], 
-            row['FNSKU2']
-        ]);
-
-        const finalSheetData = headerInfo.concat(bodyRows);
-        const worksheet = XLSX.utils.aoa_to_sheet(finalSheetData);
+        let finalSheetData1 = headerInfo1;
         
-        // 设置导出的 Excel 列宽，使其看起来更整洁
-        worksheet['!cols'] = Array(9).fill({ wch: 20 });
-
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "转换单");
+        if (dataRows.length > 0) {
+            const bodyRows1 = dataRows.map(row => [
+                row['转换类型'], row['法人主体'], row['仓库'], row['SKU1'], row['库区1'], 
+                row['FNSKU1'], row['数量'], row['SKU2'], row['FNSKU2']
+            ]);
+            finalSheetData1 = headerInfo1.concat(bodyRows1);
+        }
         
+        const worksheet1 = XLSX.utils.aoa_to_sheet(finalSheetData1);
+        worksheet1['!cols'] = Array(9).fill({ wch: 18 });
+        XLSX.utils.book_append_sheet(workbook, worksheet1, "转换单");
+
+
+        // ========== Sheet 2: 库存异常单 (10列，增加备注) ==========
+        if (unfulfilledRows.length > 0) {
+            const headerInfo2 = [
+                ['第一行是注释'],
+                ['转换类型', '法人主体', '仓库', 'SKU1', '库区1', 'FNSKU1', '数量', 'SKU2', 'FNSKU2', '备注']
+            ];
+            
+            const bodyRows2 = unfulfilledRows.map(row => [
+                row['转换类型'], row['法人主体'], row['仓库'], row['SKU1'], row['库区1'], 
+                row['FNSKU1'], row['数量'], row['SKU2'], row['FNSKU2'], row['备注']
+            ]);
+            
+            const finalSheetData2 = headerInfo2.concat(bodyRows2);
+            const worksheet2 = XLSX.utils.aoa_to_sheet(finalSheetData2);
+            worksheet2['!cols'] = Array(10).fill({ wch: 18 });
+            // 将最后一列“备注”调宽一点，方便看文字
+            worksheet2['!cols'][9] = { wch: 40 }; 
+            
+            XLSX.utils.book_append_sheet(workbook, worksheet2, "库存异常(缺货)");
+        }
+
         XLSX.writeFile(workbook, `贴换标转换单_${new Date().getTime()}.xlsx`);
     }
 </script>
